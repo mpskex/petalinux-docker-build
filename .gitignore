@@ -1,0 +1,4 @@
+install/*.run
+install/*.bsp
+*.log
+.DS_Store

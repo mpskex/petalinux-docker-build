@@ -1,0 +1,69 @@
+FROM --platform=$TARGETPLATFORM ubuntu:22.04 AS base
+
+# Petalinux docker image for Chip Dev
+# ==========
+# Fangrui Liu / fangrui.liu@outlook.com / 2023
+
+ARG PETALINUX_INSTALLER
+ARG PETALINUX_BSP
+ARG TARGETARCH
+USER root
+
+RUN apt-get update && apt-get upgrade -y
+RUN apt install ca-certificates -y
+
+FROM base AS base-amd64
+RUN echo "deb https://mirrors.tuna.tsinghua.edu.cn/ubuntu/ jammy main restricted universe multiverse\n" > /etc/apt/sources.list; \
+    echo "deb https://mirrors.tuna.tsinghua.edu.cn/ubuntu/ jammy-updates main restricted universe multiverse\n" >> /etc/apt/sources.list; \
+    echo "deb https://mirrors.tuna.tsinghua.edu.cn/ubuntu/ jammy-backports main restricted universe multiverse\n" >> /etc/apt/sources.list; \
+    echo "deb http://security.ubuntu.com/ubuntu/ jammy-security main restricted universe multiverse\n" >> /etc/apt/sources.list;
+RUN apt-get update && apt-get install default-jdk sudo git make autoconf g++ flex bison curl wget gnupg -y && apt-get clean -y
+# installing petalinux dependencies
+RUN DEBIAN_FRONTEND=noninteractive apt-get install --no-install-recommends -y iproute2 net-tools libncurses5-dev zlib1g libssl-dev flex bison libselinux1 xterm autoconf libtool \
+    texinfo zlib1g-dev gcc-multilib build-essential screen pax gawk python3 python3-pexpect python3-pip python3-git python3-jinja2 xz-utils debianutils iputils-ping iputils-ping \
+    libsdl1.2-dev cpio rsync bc lsb-release tftpd-hpa
+
+
+FROM base AS base-arm64
+RUN echo "deb https://mirrors.tuna.tsinghua.edu.cn/ubuntu-ports/ jammy main restricted universe multiverse" > /etc/apt/sources.list; \ 
+    echo "deb https://mirrors.tuna.tsinghua.edu.cn/ubuntu-ports/ jammy-updates main restricted universe multiverse" >> /etc/apt/sources.list; \ 
+    echo "deb https://mirrors.tuna.tsinghua.edu.cn/ubuntu-ports/ jammy-backports main restricted universe multiverse" >> /etc/apt/sources.list; \ 
+    echo "deb http://ports.ubuntu.com/ubuntu-ports/ jammy-security main restricted universe multiverse" >> /etc/apt/sources.list; 
+RUN apt-get update && apt-get install default-jdk sudo git make autoconf g++ flex bison curl wget gnupg -y && apt-get clean -y
+# installing petalinux dependencies
+RUN DEBIAN_FRONTEND=noninteractive apt-get install --no-install-recommends -y iproute2 net-tools libncurses5-dev zlib1g libssl-dev flex bison libselinux1 xterm autoconf libtool \
+    texinfo zlib1g-dev build-essential screen pax gawk python3 python3-pexpect python3-pip python3-git python3-jinja2 xz-utils debianutils iputils-ping iputils-ping \
+    libsdl1.2-dev cpio rsync bc lsb-release tftpd-hpa
+
+
+FROM base-${TARGETARCH} AS mid
+WORKDIR /workspace/
+# Create a valid user and transfer permission
+RUN groupadd -r petalinux -g 1001 && useradd -u 1001 -r -g petalinux -s `which bash` -c "Docker image user" petalinux && usermod -aG sudo petalinux
+RUN echo "petalinux:petalinux" | chpasswd
+RUN mkdir /home/petalinux && chown -R petalinux /workspace /home/petalinux
+# setup tftp server and petalinux will use it
+RUN mkdir -p /var/lib/tftpboot && chmod -R 777 /var/lib/tftpboot && chown -R petalinux:petalinux /var/lib/tftpboot
+RUN echo "TFTP_USERNAME=\"petalinux\"\n" > /etc/default/tftpd-hpa; \ 
+    echo "TFTP_DIRECTORY=\"/var/lib/tftpboot\"\n" >> /etc/default/tftpd-hpa; \
+    echo "TFTP_ADDRESS=\":69\"\n" >> /etc/default/tftpd-hpa; \
+    echo "TFTP_OPTIONS=\"-s -c\"\n" >> /etc/default/tftpd-hpa;
+# Clean up
+RUN apt install net-tools -y && apt clean -y
+
+FROM mid AS build
+WORKDIR /workspace/docker-build
+# Copy installer into working directory
+ADD install/petalinux-v*-installer.run install/install.sh /workspace/docker-build/install/
+RUN chmod +x install/* && ./install/install.sh
+RUN cat /workspace/petalinux_installer.log
+# Post Installation Clean Up
+RUN rm -rf /workspace/docker-build/
+
+FROM mid AS final
+COPY --from=build /workspace/petalinux /workspace/petalinux
+USER petalinux
+RUN mkdir -p /workspace/project && echo "\nservice tftpd-hpa start\nsource /workspace/petalinux/settings.sh\n" >> ~/.bashrc
+WORKDIR /workspace/project
+
+CMD ["bash"]
