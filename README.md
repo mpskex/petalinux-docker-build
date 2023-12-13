@@ -12,12 +12,10 @@ Build petalinux docker image
 - `make image`: build image locally using your downloaded installer
 - `make container`: use your built image to create a container
 
-
 ```mermaid
 flowchart TD
 
 subgraph Z["Zynq UltraScale+ MPSoc Design Flow"]
-direction LR
     a[start] ---> |PL design| b[chisel design]
     b --->|chisel-dev image| c[verilog design]
     c ---> |vivado| d[xsa hardware design]
